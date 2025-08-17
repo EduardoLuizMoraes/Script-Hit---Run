@@ -1,0 +1,124 @@
+// =======================
+// Configurações
+// =======================
+var RETREAT_DISTANCE = 10;   // blocos para trás após cada ataque
+var RETREAT_SPEED    = 1.8;  // velocidade de navegação durante o recuo
+var RETREAT_TIME     = 25;   // ticks mínimos recuando (20 ticks = 1s)
+var RETREAT_DELAY    = 3;   // ticks após ataque antes de começar a recuar
+
+// Chaves p/ TempData
+var K_RETREAT     = "hr_retreating";
+var K_TICKS       = "hr_ticks";
+var K_DELAY       = "hr_delay";
+var K_DESTX       = "hr_destX";
+var K_DESTY       = "hr_destY";
+var K_DESTZ       = "hr_destZ";
+var K_LASTTARGET  = "hr_lastTarget";
+
+// Dispara quando o NPC ACERTOU um ataque corpo-a-corpo
+function meleeAttack(e){
+    var npc = e.npc;
+    var target = e.target;
+    if (!target || !target.isAlive()) return;
+
+    if (npc.getTempData(K_RETREAT)) return; // já está em recuo
+
+    // Guarda o alvo para restaurar depois
+    npc.setTempData(K_LASTTARGET, target);
+
+    // Delay antes de começar a fugir
+    npc.setTempData(K_DELAY, RETREAT_DELAY);
+    npc.setTempData(K_RETREAT, true);
+    npc.setTempData(K_TICKS, 0); // só começa a contar após o delay
+
+    // limpa navegação/ataque enquanto espera
+    npc.setAttackTarget(null);
+    npc.clearNavigation();
+}
+
+// Dispara quando o NPC tenta adquirir um alvo
+function target(e){
+    var npc = e.npc;
+    if (npc.getTempData(K_RETREAT)){
+        // Bloqueia alvo enquanto recua/espera delay
+        e.setCanceled(true);
+        npc.setAttackTarget(null);
+    }
+}
+
+// Loop por tick (1.7.10)
+function tick(e){
+    var npc = e.npc;
+    if (!npc.getTempData(K_RETREAT)) return;
+
+    var delay = npc.getTempData(K_DELAY) || 0;
+
+    if (delay > 0){
+        // Ainda esperando para iniciar recuo
+        npc.setTempData(K_DELAY, delay - 1);
+        return;
+    }
+
+    // Já passou o delay, inicia/continua o recuo
+    var ticks = npc.getTempData(K_TICKS) || 0;
+    if (ticks === 0){
+        // Primeira vez: calcula destino
+        var target = npc.getTempData(K_LASTTARGET);
+        if (!target || !target.isAlive()){
+            // Se o alvo morreu no meio, cancela recuo
+            clearRetreat(npc);
+            return;
+        }
+        var dx = npc.getX() - target.getX();
+        var dz = npc.getZ() - target.getZ();
+        var len = Math.sqrt(dx*dx + dz*dz);
+        if (len < 0.001){
+            var rot = npc.getRotation() * Math.PI / 180.0;
+            dx = Math.cos(rot);
+            dz = Math.sin(rot);
+            len = 1.0;
+        }
+        dx /= len; dz /= len;
+        var destX = npc.getX() + dx * RETREAT_DISTANCE;
+        var destY = npc.getY();
+        var destZ = npc.getZ() + dz * RETREAT_DISTANCE;
+        npc.setTempData(K_DESTX, destX);
+        npc.setTempData(K_DESTY, destY);
+        npc.setTempData(K_DESTZ, destZ);
+        npc.navigateTo(destX, destY, destZ, RETREAT_SPEED);
+    }
+
+    // Contagem do tempo mínimo recuando
+    npc.setTempData(K_TICKS, ticks + 1);
+
+    var destX = npc.getTempData(K_DESTX);
+    var destY = npc.getTempData(K_DESTY);
+    var destZ = npc.getTempData(K_DESTZ);
+    var dx = (destX - npc.getX());
+    var dz = (destZ - npc.getZ());
+    var dist2 = dx*dx + dz*dz;
+
+    if (!npc.isNavigating() && dist2 > 2.25){
+        npc.navigateTo(destX, destY, destZ, RETREAT_SPEED);
+    }
+
+    // Termina recuo se chegou ou passou tempo mínimo
+    if (dist2 <= 2.25 || ticks >= RETREAT_TIME){
+        var oldTarget = npc.getTempData(K_LASTTARGET);
+        clearRetreat(npc);
+        // Restaura alvo se ainda vivo
+        if (oldTarget && oldTarget.isAlive()){
+            npc.setAttackTarget(oldTarget);
+        }
+    }
+}
+
+function clearRetreat(npc){
+    npc.removeTempData(K_RETREAT);
+    npc.removeTempData(K_TICKS);
+    npc.removeTempData(K_DELAY);
+    npc.removeTempData(K_DESTX);
+    npc.removeTempData(K_DESTY);
+    npc.removeTempData(K_DESTZ);
+    npc.removeTempData(K_LASTTARGET);
+}
